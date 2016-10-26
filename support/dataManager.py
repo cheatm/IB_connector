@@ -129,15 +129,14 @@ class OandaManager(Manager):
         collection=self.mDb[collection]
         kw = self.get_col_info(collection)
         print kw
-        # kw=self.get_request_parmams(col=collection,**kw)
-        # print getattr(self.opclient,kw.pop('type'))(**kw)
+
 
     def get_request_parmams(self,**kw):
         pdict={'get_history':self._save_history,
                'get_commitments_of_traders':self._save_cot,
                'get_historical_position_ratios':self._save_hpr}
 
-        return pdict[kw.pop('type')](**kw)
+        return pdict[kw.pop('func')](**kw)
 
     def seconds2ts(self,seconds):
         return '%s-%s-%sT%02d:%02d:%02d' % tuple(time.gmtime(seconds))[0:6]
@@ -191,7 +190,7 @@ class OandaManager(Manager):
         col=kw.pop('col')
         lastTime=col.find_one(projection=['time','Date'],sort=[('time',-1)])
         kw['start']=lastTime['Date']
-        kw['granularity']=kw.pop('period')
+        kw['granularity']=kw.pop('type')
         kw['daily_alignment']=0
         kw['alignment_timezone']='Asia/Shanghai'
         data=self.opclient.get_history(weekly_alignment="Monday",includefirst=False,**kw)
@@ -208,7 +207,7 @@ class OandaManager(Manager):
         slist= collection.name.split('.')
 
         Type=self.typeDict[slist[1]]
-        out=self.get_request_parmams(col=collection,instrument=slist[0],type=Type,period=slist[1])
+        out=self.get_request_parmams(col=collection,instrument=slist[0],type=slist[1],func=Type)
 
         return out
 
@@ -218,9 +217,9 @@ class OandaManager(Manager):
 
 
 if __name__ == '__main__':
-    om =OandaManager(mClient='FinanceData',db='Oanda',col='GBP_USD.D')
+    om =OandaManager(mClient='FinanceData',db='Oanda',col='USD_JPY.D')
 
-    om.update('GBP_USD.HPR')
+    om.update('USD_JPY.HPR')
 
 
 
