@@ -94,6 +94,15 @@ class InstantManager(Manager):
 
 class OandaManager(Manager):
 
+    typeDict={'M':'get_history',
+              'D':'get_history',
+              'M15':'get_history',
+              'H1':'get_history',
+              'H4':'get_history',
+              'W':'get_history',
+              'COT':'get_commitments_of_traders',
+              'HPR':'get_historical_position_ratios'}
+
 
     def __init__(self,**kw):
 
@@ -103,7 +112,7 @@ class OandaManager(Manager):
 
         self.initMongoClient(**kw)
         if 'db' not in kw:
-            self.db=self.mClient['Oanda']
+            self.mDb=self.mClient['Oanda']
 
     def __getattr__(self, item):
         try:
@@ -113,15 +122,113 @@ class OandaManager(Manager):
             pass
 
     def save_mongo(self,data,collection,db=None):
-        collection=self.db[collection] if db is None else self[db][collection]
+        collection=self.mDb[collection] if db is None else self[db][collection]
         collection.insert(data)
+
+    def update(self,collection):
+        collection=self.mDb[collection]
+        kw = self.get_col_info(collection)
+        print kw
+        # kw=self.get_request_parmams(col=collection,**kw)
+        # print getattr(self.opclient,kw.pop('type'))(**kw)
+
+    def get_request_parmams(self,**kw):
+        pdict={'get_history':self._save_history,
+               'get_commitments_of_traders':self._save_cot,
+               'get_historical_position_ratios':self._save_hpr}
+
+        return pdict[kw.pop('type')](**kw)
+
+    def seconds2ts(self,seconds):
+        return '%s-%s-%sT%02d:%02d:%02d' % tuple(time.gmtime(seconds))[0:6]
+
+    def _save_cot(self,**kw):
+        col=kw.pop('col')
+        data=self.opclient.get_commitments_of_traders(instrument=kw['instrument'])[kw['instrument']]
+        for d in data:
+
+            if col.find_one({'time':d['date']}) is not None:
+
+                continue
+            d['time']=d['date']
+            d['date']=time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(d['time']))
+            d['publish']=d['time']+345600
+            d['l-s']=float(d['ncl'])-float(d['ncs'])
+            d['s-l']=-d['l-s']
+            col.insert_one(d)
+            sl=col.find_one({'publish':{'$lt':d['time']}},sort=[('publish',-1)])['s-l']
+            col.update_one({'publish':d['publish']},{'$set':{'s-l_diff':d['s-l']-sl}})
+
+        return kw
+
+    def _save_hpr(self,**kw):
+        col=kw.pop('col')
+        data=self.opclient.get_historical_position_ratios(instrument=kw['instrument'],
+                                                          period=31536000)
+
+        data= data['data'][kw['instrument']]['data']
+
+        last=col.find_one(projection=['time'],sort=[('time',-1)])['time']
+        col.delete_one({'time':last})
+
+        for d in data:
+            if col.find_one({'time':d[0]}) is not None:
+                continue
+
+            saveDict={'time':d[0],'long_position_ratio':d[1],
+                      'short_position_ratio':100-d[1],
+                      'position':100-2*d[1],
+                      'exchange_rate':d[2]}
+            saveDict['datetime']=time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(d[0]))
+            pos=col.find_one(filter={'time':{'$lt':d[0]}},sort=[('time',-1)])['position']
+            saveDict['position_diff']=saveDict['position']-pos
+            col.insert_one(saveDict)
+
+
+        return kw
+
+    def _save_history(self,**kw):
+        col=kw.pop('col')
+        lastTime=col.find_one(projection=['time','Date'],sort=[('time',-1)])
+        kw['start']=lastTime['Date']
+        kw['granularity']=kw.pop('period')
+        kw['daily_alignment']=0
+        kw['alignment_timezone']='Asia/Shanghai'
+        data=self.opclient.get_history(weekly_alignment="Monday",includefirst=False,**kw)
+
+        for candle in data['candles']:
+            candle.pop('complete',0)
+            candle['Date']=candle['time'][:-8]
+            candle['time']=time.mktime(time.strptime(candle['Date'],'%Y-%m-%dT%H:%M:%S'))
+        col.insert(data['candles'])
+
+        return kw
+
+    def get_col_info(self,collection):
+        slist= collection.name.split('.')
+
+        Type=self.typeDict[slist[1]]
+        out=self.get_request_parmams(col=collection,instrument=slist[0],type=Type,period=slist[1])
+
+        return out
+
+
+
 
 
 
 if __name__ == '__main__':
-    om =OandaManager(mClient='New',db='Oanda')
+    om =OandaManager(mClient='FinanceData',db='Oanda',col='GBP_USD.D')
 
-    print om.opclient.get_commitments_of_traders(instrument='EUR_USD')
+    om.update('GBP_USD.HPR')
+
+
+
+
+    # print om.opclient.get_commitments_of_traders(instrument='EUR_USD')
+
+
+
 
 
 
