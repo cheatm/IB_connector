@@ -1,6 +1,8 @@
 from oandapy import oandapy
-import json,os,time
+import json,os,time,random
 import DataBase.Client
+import threading
+import Queue
 
 def getRootDir(path=os.getcwd()):
     if os.path.exists('%s/ROOT' % path):
@@ -127,8 +129,58 @@ class OandaManager(Manager):
 
     def update(self,collection):
         collection=self.mDb[collection]
-        kw = self.get_col_info(collection)
+        kw = self._get_col_info(collection)
         print kw
+
+    def update_manny(self,*collections):
+        if len(collections)==0:
+            collections=self.mDb.collection_names(False)
+
+        self.__multiThreadRun(collections,self.fake_update)
+
+
+        print time.clock()
+        print len(collections)
+
+    def __multiThreadRun(self,paramList,function,Max=5):
+
+        queue=Queue.Queue()
+
+        for params in paramList:
+            if isinstance(params,tuple):
+                pass
+            elif isinstance(params,dict):
+                pass
+            elif isinstance(params,list):
+                pass
+            else:
+                thread=threading.Thread(target=function,args=[params])
+                queue.put(thread)
+
+        running=[]
+        while queue.qsize()>0 or len(running)>0 :
+            if len(running)<Max and queue.qsize()>0:
+                t=queue.get()
+                t.start()
+                running.append(t)
+                t.join(0)
+
+            if len(running)>0:
+                for t in running:
+                    if not t.isAlive():
+                        running.remove(t)
+
+            if len(running)==Max:
+                time.sleep(1)
+
+
+
+
+        del running
+
+    def fake_update(self,collection):
+        print collection
+        time.sleep(random.random())
 
 
     def get_request_parmams(self,**kw):
@@ -203,7 +255,7 @@ class OandaManager(Manager):
 
         return kw
 
-    def get_col_info(self,collection):
+    def _get_col_info(self,collection):
         slist= collection.name.split('.')
 
         Type=self.typeDict[slist[1]]
@@ -215,16 +267,25 @@ class OandaManager(Manager):
 
 
 
-
 if __name__ == '__main__':
-    om =OandaManager(mClient='FinanceData',db='Oanda',col='USD_JPY.D')
 
-    om.update('USD_JPY.HPR')
+    om=OandaManager()
+
+    data=om.get_eco_calendar(instrument='EUR_USD',period=2592000)
+
+    for d in data:
+        d['date']=time.localtime(d['timestamp'])
+
+    import pandas
+    print pandas.DataFrame(data)
 
 
+    # om.update_manny()
 
 
-    # print om.opclient.get_commitments_of_traders(instrument='EUR_USD')
+    # threadTest()
+
+
 
 
 
