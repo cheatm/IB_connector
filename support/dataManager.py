@@ -1,8 +1,10 @@
+ #coding=utf-8
 from oandapy import oandapy
+from pyoanda import Client
 import json,os,time,random
 import DataBase.Client
 import threading
-import Queue
+import Queue,pandas
 
 def getRootDir(path=os.getcwd()):
     if os.path.exists('%s/ROOT' % path):
@@ -13,6 +15,16 @@ def getRootDir(path=os.getcwd()):
 class Manager():
 
     def initMongoClient(self,**kw):
+        '''
+
+        :param kw:
+            mClient: name of json file contains MongoDB information
+            ClientObject: existed MongoClient Object
+            db: default mongodb to be set
+            collection: default collection to be set in default db
+
+        :return:
+        '''
 
         self.mClient=DataBase.Client.connectDB(kw.pop('mClient','FinanceData'))\
         if 'ClientObject' not in kw else kw.pop('ClientObject')
@@ -33,6 +45,94 @@ class Manager():
 
     def setDefaultCollection(self,db,col):
         self.collection=self.mClient[db][col]
+
+    def _multiFunctionrun(self,funcList,Max=5):
+        queue=Queue.Queue()
+
+        for func,param in funcList:
+
+            queue.put(threading.Thread(target=func,kwargs=param))
+
+        running=[]
+
+        for i in range(0,Max):
+            if queue.qsize()>0:
+                t=queue.get()
+                t.start()
+                running.append(t)
+                t.join(0)
+
+
+        while len(running)>0:
+
+            for t in running:
+                if t.isAlive():
+                    continue
+
+                running.remove(t)
+                if queue.qsize()>0:
+                    t=queue.get()
+                    t.start()
+                    running.append(t)
+                    t.join(0)
+
+
+            if len(running)==Max:
+                time.sleep(1)
+
+        del running
+
+
+
+
+
+    def _multiThreadRun(self,paramList,function,Max=5):
+        '''
+        以不同的参数(paramList)调用同一个方法(funcion),最大并行为Max
+        :param paramList:
+             [param, # func(single)
+             [param1,param2,...], # func(*args)
+             {key1:value1,key2:value2,...}, # func(**kwargs)
+             ([param1,param2,...],{key1:value1,key2:value2,...}), # func(*args,**kwargs)
+             ......]
+        :param function: 调用的方法
+        :param Max: 最大并行数
+        :return:
+        '''
+
+        queue=Queue.Queue()
+
+        for params in paramList:
+            if isinstance(params,tuple):
+                thread=threading.Thread(target=function,args=params[0],kwargs=params[1])
+                queue.put(thread)
+            elif isinstance(params,dict):
+                thread=threading.Thread(target=function,kwargs=params)
+                queue.put(thread)
+            elif isinstance(params,list):
+                thread=threading.Thread(target=function,args=params)
+                queue.put(thread)
+            else:
+                thread=threading.Thread(target=function,args=[params])
+                queue.put(thread)
+
+        running=[]
+        while queue.qsize()>0 or len(running)>0 :
+            if len(running)<Max and queue.qsize()>0:
+                t=queue.get()
+                t.start()
+                running.append(t)
+                t.join(0)
+
+            if len(running)>0:
+                for t in running:
+                    if not t.isAlive():
+                        running.remove(t)
+
+            if len(running)==Max:
+                time.sleep(1)
+
+        del running
 
 
 class InstantManager(Manager):
@@ -107,10 +207,24 @@ class OandaManager(Manager):
 
 
     def __init__(self,**kw):
+        '''
 
-        doc="%s/support/%s.json" % (getRootDir(),kw.pop('doc','oandapyClient'))
-        cInfo=kw.pop('info',json.load(open(doc)))
-        self.opclient=kw.pop('client',oandapy.API(**cInfo))
+        :param kw:
+            doc: json file contains OnadaClient infomation
+            mClient: name of json file contains MongoDB information
+            ClientObject: existed MongoClient Object
+            db: default mongodb to be set
+            collection: default collection to be set in default db
+
+        :return:
+        '''
+
+
+        infoFile='%s/support/%s.json' % (getRootDir(),kw.pop('doc','OandaClient'))
+        info=json.load(open(infoFile))
+        self.opclient=oandapy.API(**info['oandapy'])
+        self.poclient=Client(**info['pyoanda'])
+
 
         self.initMongoClient(**kw)
         if 'db' not in kw:
@@ -136,51 +250,13 @@ class OandaManager(Manager):
         if len(collections)==0:
             collections=self.mDb.collection_names(False)
 
-        self.__multiThreadRun(collections,self.fake_update)
-
+        self._multiThreadRun(collections,self.update)
 
         print time.clock()
-        print len(collections)
 
-    def __multiThreadRun(self,paramList,function,Max=5):
-
-        queue=Queue.Queue()
-
-        for params in paramList:
-            if isinstance(params,tuple):
-                pass
-            elif isinstance(params,dict):
-                pass
-            elif isinstance(params,list):
-                pass
-            else:
-                thread=threading.Thread(target=function,args=[params])
-                queue.put(thread)
-
-        running=[]
-        while queue.qsize()>0 or len(running)>0 :
-            if len(running)<Max and queue.qsize()>0:
-                t=queue.get()
-                t.start()
-                running.append(t)
-                t.join(0)
-
-            if len(running)>0:
-                for t in running:
-                    if not t.isAlive():
-                        running.remove(t)
-
-            if len(running)==Max:
-                time.sleep(1)
-
-
-
-
-        del running
-
-    def fake_update(self,collection):
-        print collection
-        time.sleep(random.random())
+    # def fake_update(self,collection):
+    #     print collection
+    #     time.sleep(random.random())
 
 
     def get_request_parmams(self,**kw):
@@ -244,14 +320,18 @@ class OandaManager(Manager):
         kw['start']=lastTime['Date']
         kw['granularity']=kw.pop('type')
         kw['daily_alignment']=0
-        kw['alignment_timezone']='Asia/Shanghai'
-        data=self.opclient.get_history(weekly_alignment="Monday",includefirst=False,**kw)
+        kw['alignment_timezone']='GMT'
+        kw['weekly_alignment']="Monday"
+        data=self.poclient.get_instrument_history(**kw)
 
         for candle in data['candles']:
-            candle.pop('complete',0)
+            if not candle.pop('complete',True):
+                data['candles'].remove(candle)
+                break
+
             candle['Date']=candle['time'][:-8]
             candle['time']=time.mktime(time.strptime(candle['Date'],'%Y-%m-%dT%H:%M:%S'))
-        col.insert(data['candles'])
+        print pandas.DataFrame(data['candles'])
 
         return kw
 
@@ -264,26 +344,29 @@ class OandaManager(Manager):
         return out
 
 
-
-
-
 if __name__ == '__main__':
 
     om=OandaManager()
 
-    data=om.get_eco_calendar(instrument='EUR_USD',period=2592000)
-
-    for d in data:
-        d['date']=time.localtime(d['timestamp'])
-
-    import pandas
-    print pandas.DataFrame(data)
 
 
-    # om.update_manny()
 
 
-    # threadTest()
+    # updates=[]
+    # for name in om.mDb.collection_names():
+    #     if 'COT' in name or 'HPR' in name:
+    #         updates.append(name)
+    #
+    # om.update_manny(*updates)
+
+
+    # his= om.poclient.get_instrument_history(instrument='WTICO_USD',granularity='D',
+    #                                         count=20,start='2016-10-16T21:00:00.000000Z',
+    #                                         daily_alignment=0, alignment_timezone='GMT+3',)['candles']
+    # print pandas.DataFrame(his).set_index('time')
+
+
+
 
 
 
