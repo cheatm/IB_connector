@@ -46,22 +46,29 @@ class Manager():
     def setDefaultCollection(self,db,col):
         self.collection=self.mClient[db][col]
 
-    def _multiFunctionrun(self,funcList,Max=5):
+    def _multiFunctionrun(self,funcList,Max=5,sleep=1):
+        '''
+
+        :param funcList:
+            [(function,params),......]
+            params:{}
+        :param Max: 最大并行
+        :param sleep: 最大并行时休眠时间
+        :return:
+        '''
         queue=Queue.Queue()
 
-        for func,param in funcList:
+        for func,params in funcList:
 
-            queue.put(threading.Thread(target=func,kwargs=param))
+            queue.put(threading.Thread(target=func,kwargs=params))
 
         running=[]
 
-        for i in range(0,Max):
-            if queue.qsize()>0:
-                t=queue.get()
-                t.start()
-                running.append(t)
-                t.join(0)
-
+        for i in range(0,max(Max,queue.qsize())):
+            t=queue.get()
+            t.start()
+            running.append(t)
+            t.join(0)
 
         while len(running)>0:
 
@@ -70,23 +77,19 @@ class Manager():
                     continue
 
                 running.remove(t)
-                if queue.qsize()>0:
+                if queue.qsize():
                     t=queue.get()
                     t.start()
                     running.append(t)
                     t.join(0)
 
-
             if len(running)==Max:
-                time.sleep(1)
+                time.sleep(sleep)
 
         del running
 
 
-
-
-
-    def _multiThreadRun(self,paramList,function,Max=5):
+    def _multiThreadRun(self,paramList,function,Max=5,sleep=1):
         '''
         以不同的参数(paramList)调用同一个方法(funcion),最大并行为Max
         :param paramList:
@@ -117,20 +120,28 @@ class Manager():
                 queue.put(thread)
 
         running=[]
-        while queue.qsize()>0 or len(running)>0 :
-            if len(running)<Max and queue.qsize()>0:
-                t=queue.get()
-                t.start()
-                running.append(t)
-                t.join(0)
+        for i in range(0,max(Max,queue.qsize())):
+            t=queue.get()
+            t.start()
+            running.append(t)
+            t.join(0)
 
-            if len(running)>0:
-                for t in running:
-                    if not t.isAlive():
-                        running.remove(t)
+        while len(running)>0 :
+            for t in running:
+                if t.isAlive():
+                    continue
+
+                running.remove(t)
+                if queue.qsize():
+                    t=queue.get()
+                    t.start()
+                    running.append(t)
+                    t.join(0)
 
             if len(running)==Max:
-                time.sleep(1)
+                time.sleep(sleep)
+
+        del running
 
         del running
 
