@@ -1,26 +1,42 @@
 import time
 
-class Strategy():
+class Strategy(object):
 
-    onBarData={}
-    indicators=[]
-
-    def __init__(self,engine,collection=None,**kw):
+    def __init__(self,engine,**kw):
 
         self.engine=engine
+
+    def set_params(self,**params):
+        for p in params:
+            if hasattr(self,p):
+                self.__setattr__(p,params[p])
+            else:
+                raise AttributeError("No param names '%s' " % p)
+
+    def set_engine(self,engine):
+        self.engine=engine
+
+    def OnInit(self,**kw):
+        pass
+
+    def setIndicator(self,name,indicator,collection,*inputs,**params):
+        self.engine.addIndicator([name,indicator,collection,inputs,params])
 
 
     def onBar(self,**data):
         pass
 
+    def buy(self,**order):
+        self.engine.buy(**order)
 
-    def buy(self):
-        self.engine.buy()
+    def sell(self,**order):
+        self.engine.sell(**order)
 
-    def sell(self):
-        self.engine.sell()
+    def get(self,**kw):
+        return self.engine.get(**kw)
 
 
 
-if __name__ == '__main__':
-    pass
+
+# if __name__ == '__main__':
+#     s=Strategy()

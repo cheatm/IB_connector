@@ -29,6 +29,3 @@ def getDBinfo(dbname):
     filepath='%s/%s.json' % (db_info_dir,dbname)
     info=json.load(open(filepath))
     return info
-
-if __name__ == '__main__':
-    pass
