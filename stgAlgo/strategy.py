@@ -22,6 +22,9 @@ class Strategy(object):
     def setIndicator(self,name,indicator,collection,*inputs,**params):
         self.engine.addIndicator([name,indicator,collection,inputs,params])
 
+    def addSymbol(self,symbol,projection):
+        self.engine.addSymbol(symbol,projection)
+        pass
 
     def onBar(self,**data):
         pass

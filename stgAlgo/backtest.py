@@ -1,6 +1,7 @@
 # coding:utf-8
 import time
 
+
 class BackTestSystem():
 
     def __init__(self,strategy):
@@ -27,4 +28,4 @@ class BackTestSystem():
 
         for c in cursor:
             self.engine.refresh(c)
-            self.strategy.onBar(**c)
+            self.strategy.onBar(self.engine.data)
