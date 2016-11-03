@@ -8,8 +8,8 @@ class Order():
             self.code=code
             self.openPrice=openPrice
             self.lots=lots
-            self.stoplost=stoplost
-            self.takeprofit=takeprofit
+            self.stoplost=self.openPrice-stoplost*lots/abs(lots)
+            self.takeprofit=self.openPrice+takeprofit*lots/abs(lots)
             self.ticket=ticket
             self.deposit=deposit
             self.openTime=time
@@ -20,24 +20,24 @@ class Order():
             self.closePrice=price
             self.profit=(self.closePrice-self.openPrice)*self.lots
 
-        def refresh(self,price,cls):
-
-            profit=(price-self.openPrice)*self.lots
-
-            if self.takeprofit != 0:
-                if profit>(self.takeprofit-self.openPrice)*self.lots:
-                    cls.closeOrder(ticket=self.ticket,price=self.takeprofit)
-
-                    return
-
-            if self.stoplost != 0:
-                if profit<(self.stoplost-self.openPrice)*self.lots:
-                    cls.closeOrder(ticket=self.ticket,price=self.stoplost)
-
-                    return
-
-            self.closePrice=price
-            self.profit=profit
+        # def refresh(self,price,cls):
+        #
+        #     profit=(price-self.openPrice)*self.lots
+        #
+        #     if self.takeprofit != 0:
+        #         if profit>(self.takeprofit-self.openPrice)*self.lots:
+        #             cls.closeOrder(ticket=self.ticket,price=self.takeprofit)
+        #
+        #             return
+        #
+        #     if self.stoplost != 0:
+        #         if profit<(self.stoplost-self.openPrice)*self.lots:
+        #             cls.closeOrder(ticket=self.ticket,price=self.stoplost)
+        #
+        #             return
+        #
+        #     self.closePrice=price
+        #     self.profit=profit
 
 class Account():
 
@@ -46,7 +46,7 @@ class Account():
     Time=0
     capital=[]
 
-    def __init__(self,initCash=1000000,lever=1):
+    def __init__(self,initCash=1000000,lever=1,**kwargs):
         '''
 
         :param initCash: initial cash
@@ -54,8 +54,11 @@ class Account():
         :return:
 
         How to use:
-            # create an account:
+            # create an account with default setting:
             acc=Account()
+
+            # create an account:
+            acc=Account(initCash=9999999,lever=50,close='closeBid',high='highBid',low='lowBid')
 
 
         '''
@@ -65,17 +68,24 @@ class Account():
         self.cash=initCash
         self.initCash=initCash
         self.nextTicket=0
-        pass
 
-    def closeOrder(self,price,order=None,ticket=None):
+        self.CLOSE=kwargs.pop('close','close')
+        self.HIGH=kwargs.pop('high','high')
+        self.LOW=kwargs.pop('low','low')
+        if 'data' in kwargs:
+            self.data=kwargs['data']
+
+    def setDataInterface(self,data):
+        self.data=data
+
+    def closeOrder(self,price,order=None):
         '''
 
         :param price:
         :param order:
+        :param ticket:
         :return:
         '''
-
-        order=order if order is not None else self.findOrder(ticket)
 
         order.close(price,self.Time)
         self.cash=self.cash+order.profit+order.deposit
@@ -132,17 +142,36 @@ class Account():
 
         return(log)
 
-    def refresh(self,time,price):
-        self.Time=time
+    def refreshOrder(self,order):
+
+        if order.lots>0:
+            if order.stoplost>self.data[order.code][self.LOW]:
+                self.closeOrder(order.stoplost,order)
+                return
+            if order.takeprofit<self.data[order.code][self.HIGH]:
+                self.closeOrder(order.takeprofit,order)
+                return
+        else:
+            if order.stoplost<self.data[order.code][self.HIGH]:
+                self.closeOrder(order.stoplost,order)
+                return
+            if order.takeprofit>self.data[order.code][self.LOW]:
+                self.closeOrder(order.takeprofit,order)
+                return
+
+        pass
+
+    def refresh(self):
+        self.Time=self.data.time[0]
 
         for o in self.orders:
-            o.refresh(price,self)
+            self.refreshOrder(o)
 
         capital=self.cash
         for o in self.orders:
             capital=capital+o.profit+o.deposit
 
-        self.capital.append([time,capital])
+        self.capital.append([self.Time,capital])
 
     def findOrder(self,value,searchBy='ticket',mode='orders'):
         for o in getattr(self,mode):

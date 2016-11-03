@@ -92,14 +92,17 @@ def getIndicator(indicator,time,*inputs,**params):
         print 'length not equal'
         return
 
+    Max=params.pop('Max',0)
+
     ind = getInd(indicator,*inputs,**params)
 
-    data={'time':time}
+
+    data={'time':time[time.index[-Max]:]}
     if not isinstance(ind,tuple):
-        data[0]=ind
+        data[0]=ind[-Max:]
     else:
         for d in range(0,len(ind)):
-            data[d]=ind[d]
+            data[d]=ind[d][-Max:]
 
     ind=pandas.DataFrame(data).dropna()
 
@@ -107,4 +110,9 @@ def getIndicator(indicator,time,*inputs,**params):
 
 
 if __name__ == '__main__':
-    pass
+    # import pymongo
+    # client=pymongo.MongoClient(port=10001)
+    # data=client.Oanda['GBP_USD.D'].find(projection=['closeBid']).toDataFrame()
+    # print data['closeBid']
+    print talib.abstract.MA(data['closeBid'],timeperiod=10)
+
