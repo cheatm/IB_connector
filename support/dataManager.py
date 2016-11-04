@@ -143,7 +143,6 @@ class Manager():
 
         del running
 
-        del running
 
 
 class InstantManager(Manager):
@@ -329,6 +328,7 @@ class OandaManager(Manager):
         col=kw.pop('col')
         lastTime=col.find_one(projection=['time','Date'],sort=[('time',-1)])
         kw['start']=lastTime['Date']
+        kw['count']=5000
         kw['granularity']=kw.pop('type')
         kw['daily_alignment']=0
         kw['alignment_timezone']='GMT'
@@ -336,12 +336,14 @@ class OandaManager(Manager):
         data=self.poclient.get_instrument_history(**kw)
 
         for candle in data['candles']:
-            if not candle.pop('complete',True):
+            if not candle.get('complete',True):
                 data['candles'].remove(candle)
                 break
 
             candle['Date']=candle['time'][:-8]
             candle['time']=time.mktime(time.strptime(candle['Date'],'%Y-%m-%dT%H:%M:%S'))
+            col.insert_one(candle)
+
         print pandas.DataFrame(data['candles'])
 
         return kw
@@ -358,7 +360,7 @@ class OandaManager(Manager):
 if __name__ == '__main__':
 
     om=OandaManager()
-
+    om.update_manny()
 
 
 

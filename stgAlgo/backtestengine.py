@@ -3,30 +3,113 @@ from support.dataManager import Manager
 import time
 from support.talibs import getInd,getIndicator
 from account import Account,Order
+import stgAlgo.oanda_point as point
 
 class ActiveData(object):
 
 
-    def __init__(self,name,maxLength=100):
+    def __init__(self,name,point=1):
+        '''
+
+        :param name: 服务名
+        :param point: 点数
+        :return:
+        '''
+
         self.name=name
-        self.maxLength=maxLength
+        self.point=point
+
+        # 表示存储的数据
         self.columns=[]
+        # 表示存储的其他数据服务
+        self.child=[]
 
     def importData(self,**kwargs):
+        '''
+        向数据服务的列表中添加数据
+        :param kwargs:
+            a=x,b=y,...
+            a,b:数据服务中的列表名
+            x,y:要添加的数据
+        :return:
+        '''
         for k in kwargs:
-            self.__getattribute__(k).insert(0,kwargs[k])
+            self.__getattribute__(k).append(kwargs[k])
 
     def importOther(self,other,**kwargs):
+        '''
+        向子服务添加数据
+        :param other: 子服务对象名
+        :param kwargs: 同importData
+        :return:
+        '''
         self[other].importData(**kwargs)
+
+    def create(self,attr,*attrs):
+        '''
+        创建空数据列
+        :param attr: 列名
+        :param attrs: 列所在的服务，不输入代表当前服务
+
+            ActiveData.create('name','ad1','ad2')
+            表示在当前服务的ad1服务的ad2服务中创建空数据列
+
+        :return:
+        '''
+        if len(attrs):
+            if hasattr(self,attrs[0]):
+                if isinstance(self[attrs[0]],ActiveData):
+                    self[attrs[0]].create(attr,*attrs[1:])
+                else:
+                    raise TypeError("self.%s is not class<ActiveData>" % attrs[0])
+            else:
+                raise AttributeError("ActiveData<%s> does not have attribute: %s" % (self.name,attrs[0]) )
+
+        else:
+            self[attr]=[]
+            self.columns.append(attr)
+
+    def createChild(self,name,point=1):
+        '''
+        创建名为name的子服务
+        :param name: 服务名
+        :param point: 点数
+        :return:
+        '''
+
+        self[name]=ActiveData(name,point)
+        self.child.append(name)
+
+    def clear(self,keep=100,*columns):
+        '''
+        清除本服务的列表中的数据，每列只保留keep个最新数据
+        :param keep:
+        :param columns: 需要清除的列表，不输入代表全部
+        :return:
+        '''
+        columns=self.columns if columns.__len__() == 0 else columns
+        for c in columns:
+            while self[c].__len__()>keep:
+                self[c].pop(0)
+
+    def clearAll(self,keep=100):
+        '''
+        清除本服务及所有子服务中的列表中的数据，每列只保留keep个最新数据
+        :param keep:
+        :return:
+        '''
+        self.clear(keep)
+        for child in self.child:
+            self[child].clearAll(keep)
 
     def __getitem__(self, item):
         if item is None:
             return self
-
         return getattr(self,item,None)
 
     def __setitem__(self, key, value):
         self.__setattr__(key,value)
+
 
     def showAll(self):
         for c in self.columns:
@@ -49,29 +132,20 @@ class OandaEngine(Manager):
         self.initMongoClient(**kw)
         self.projection=['time','closeBid','closeAsk','highBid','highAsk','lowBid','lowAsk','openBid','openAsk']
 
+    def initDataSerivce(self,symbol,data=None,**kw):
+        self.data=ActiveData(symbol,kw.pop('point',1)) if data==None else data
+        for prj in kw.pop('projection',self.projection):
+            self.data[prj]=[]
+
+        self.acc.setDataInterface(self.data)
+
     def OnInit(self,collection=None,**kw):
         # 设置默认数据
         if collection is not None:
             self.set_collection(collection)
 
         # 初始化数据服务
-        self.data=ActiveData(self.symbol)
-        for prj in kw.pop('projection',self.projection):
-            self.data[prj]=[]
-
-        for o in self.others:
-            self.data[o]=ActiveData(o)
-            for c in self.others[o]:
-                self.data[o].__setattr__(c,[])
-
-        for info in self.indinfo:
-            name=info[0]
-            col=info[2]
-            self.data[col].__setattr__(name,[])
-
-        # 向account提供数据服务
-        self.acc.setDataInterface(self.data)
-
+        self.initDataSerivce(collection,**kw)
 
     def setAccount(self,account):
         # 重设账户
@@ -101,9 +175,11 @@ class OandaEngine(Manager):
 
     def open(self,**kw):
 
-        self.acc.openOrder(code=kw.get('symbol',None),
-                           price=kw.pop('price',self.data[kw.pop('symbol',None)][0]),
+        symbol=kw.get('symbol',None)
+        self.acc.openOrder(code=symbol,
+                           price=kw.pop('price',self.data[symbol]['closeBid'][-1]),
                            lots=kw.pop('lots',1),
+                           point=self.data[symbol].point,
                            **kw
                            )
 
@@ -122,21 +198,19 @@ class OandaEngine(Manager):
         '''
 
         order=kw.pop('order') if 'order' in kw else self.acc.findOrder(kw['value'],kw.pop('searchBy','ticket'))
-        self.acc.closeOrder(self.data[order.code]['closeBid'],order)
+        self.acc.closeOrder(self.data[order.code]['closeBid'][-1],order)
 
-    def addIndicator(self,ind):
+    def addIndicator(self,name,*args,**kw):
         # 添加常驻指标信息
+        kw.pop('data',self.data).create(name,*args)
 
-        if ind[2] is not None:
-            self.others[ind[2]]=ind[3]
 
-        ind.append(max(ind[4].values()))
-
-        self.indinfo.append(ind)
-
-    def addSymbol(self,symbol,projection):
+    def addSymbol(self,symbol,projection,**kw):
         # 添加其他常驻数据信息
         self.others[symbol]=projection
+        self.data.createChild(symbol,kw.pop('point',1))
+        for prj in projection:
+            self.data[symbol][prj]=[]
 
     def __refreshOthers(self,t):
         # 刷新常驻数据
@@ -155,6 +229,9 @@ class OandaEngine(Manager):
             ind=getInd(indicator,*inputs,**params)
             self.data[collection].importData(**{name:ind[-1]})
 
+    def finish(self):
+        self.acc.finish()
+
     def refresh(self,data):
         data.pop('_id',0)
 
@@ -162,17 +239,15 @@ class OandaEngine(Manager):
         self.data.importData(**data)
         # 更新常驻数据
         self.__refreshOthers(data['time'])
-        # 更新常驻指标
-        self.__refreshIndicator()
         # 更新账户
         self.acc.refresh()
 
 
 if __name__ == '__main__':
+
     engine=OandaEngine()
 
     engine.addSymbol('EUR_USD.D',['closeBid'])
-    engine.addIndicator(['maFast','MA','EUR_USD.D',['closeBid'],{'timeperiod':10}])
     for i in engine.mDb['GBP_USD.D'].find(projection=['time','closeBid','openBid']).limit(30):
         engine.refresh(i)
 
