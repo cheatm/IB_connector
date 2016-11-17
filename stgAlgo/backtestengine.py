@@ -130,7 +130,7 @@ class OandaEngine(Manager):
         if 'db' not in kw:
             kw['db']='Oanda'
         self.initMongoClient(**kw)
-        self.projection=['time','closeBid','closeAsk','highBid','highAsk','lowBid','lowAsk','openBid','openAsk']
+        self.projection=['time','closeMid','highMid','lowMid','openMid','datetime']
 
     def initDataSerivce(self,symbol,data=None,**kw):
         self.data=ActiveData(symbol,kw.pop('point',1)) if data==None else data
@@ -177,7 +177,7 @@ class OandaEngine(Manager):
 
         symbol=kw.get('symbol',None)
         self.acc.openOrder(code=symbol,
-                           price=kw.pop('price',self.data[symbol]['closeBid'][-1]),
+                           price=kw.pop('price',self.data[symbol]['closeMid'][-1]),
                            lots=kw.pop('lots',1),
                            point=self.data[symbol].point,
                            **kw

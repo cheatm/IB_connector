@@ -11,7 +11,7 @@ class BackTestSystem():
     def set_collection(self,collection):
         self.engine.set_collection(collection)
 
-    def run(self,collection,start=0,end=time.time(),**params):
+    def run(self,collection,start=0,end=time.time(),begin=0,**params):
         '''
 
         :param collection: 基础数据
@@ -41,13 +41,17 @@ class BackTestSystem():
 
         print self.engine.data.point
 
+
         times=0
-        for c in cursor:
+        for c in cursor.clone()[:begin]:
+            self.engine.refresh(c)
+
+        for c in cursor[begin:]:
             self.engine.refresh(c)
             self.strategy.onBar(self.engine.data)
             times+=1
-            if not times%50:
-                self.engine.data.clearAll()
+            # if not times%50:
+            #     self.engine.data.clearAll()
 
         self.engine.finish()
 

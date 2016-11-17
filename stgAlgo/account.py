@@ -1,6 +1,7 @@
 # coding:utf-8
 from datetime import datetime as dt
 import pandas
+from datetime import datetime
 
 class Order():
 
@@ -30,7 +31,7 @@ class Account():
     ordersHistory=[]
     Time=0
     capital=[]
-    log={}
+    log=[]
 
     def __init__(self,initCash=1000000,lever=1,**kwargs):
         '''
@@ -151,7 +152,7 @@ class Account():
                 self.closeOrder(order.takeprofit,order,'TP')
                 return
 
-        order.profit=(self.data[order.code]['closeBid'][-1]-order.openPrice)*order.lots/\
+        order.profit=(self.data[order.code]['closeMid'][-1]-order.openPrice)*order.lots/\
             self.data[order.code].point
 
         pass
@@ -166,16 +167,29 @@ class Account():
         for o in self.orders:
             capital=capital+o.profit+o.deposit
 
-        self.log[self.Time]={'cash':self.cash,
-                             'capital':capital}
+        self.log.append(
+            {
+                'cash':self.cash,
+                'capital':capital,
+                'time':self.Time,
+                'datetime':datetime.fromtimestamp(self.Time)
+            }
+        )
 
 
     def finish(self):
         # 结束时调用，平掉未平仓的订单
         for order in self.orders:
-            self.closeOrder(self.data[order.code].closeBid[-1],order,'close at stop')
+            self.closeOrder(self.data[order.code].closeMid[-1],order,'close at stop')
 
-        self.log['close']={'cash':self.cash,'capital':self.cash}
+        self.log.append(
+            {
+                'cash':self.cash,
+                'capital':self.cash,
+                'time':self.Time,
+                'datetime':datetime.fromtimestamp(self.Time)
+            }
+        )
 
 
     def findOrder(self,value,searchBy='ticket',mode='orders'):
