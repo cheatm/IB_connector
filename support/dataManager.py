@@ -6,6 +6,7 @@ import DataBase.Client
 import threading
 import Queue,pandas
 from datetime import datetime,timedelta
+from timeMerge import TimeJoiner
 
 def getRootDir(path=os.getcwd()):
     if os.path.exists('%s/ROOT' % path):
@@ -96,11 +97,13 @@ class Manager():
         '''
         以不同的参数(paramList)调用同一个方法(funcion),最大并行为Max
         :param paramList:
-             [param, # func(single)
-             [param1,param2,...], # func(*args)
-             {key1:value1,key2:value2,...}, # func(**kwargs)
-             ([param1,param2,...],{key1:value1,key2:value2,...}), # func(*args,**kwargs)
-             ......]
+             [
+                param, # func(single)
+                [param1,param2,...], # func(*args)
+                {key1:value1,key2:value2,...}, # func(**kwargs)
+                ([param1,param2,...],{key1:value1,key2:value2,...}), # func(*args,**kwargs)
+                ......
+             ]
         :param function: 调用的方法
         :param Max: 最大并行数
         :return:
@@ -119,35 +122,54 @@ class Manager():
                 thread=threading.Thread(target=function,args=params)
                 queue.put(thread)
             else:
-                thread=threading.Thread(target=function,args=[params])
+                thread=threading.Thread(target=function,args=[params],name=params)
                 queue.put(thread)
 
         running=[]
-        for i in range(0,max(Max,queue.qsize())):
-            t=queue.get()
-            t.start()
-            running.append(t)
-            t.join(0)
-            time.sleep(sleep)
 
-        while len(running)>0 :
+        def release(running):
             for t in running:
-                if t.isAlive():
-                    continue
+                if not t.isAlive():
+                    running.remove(t)
 
-                running.remove(t)
-                if queue.qsize():
-                    t=queue.get()
-                    t.start()
-                    running.append(t)
-                    t.join(0)
+        while queue.qsize():
+            if len(running)<Max:
+                t=queue.get()
+                t.start()
+                running.append(t)
+                t.join(0)
+                continue
+            else:
+                release(running)
 
-            if len(running)==Max:
-                time.sleep(sleep)
+        while len(running):
+            release(running)
+            time.sleep(0.1)
 
-        del running
 
-
+        # for i in range(0,max(Max,queue.qsize())):
+        #     t=queue.get()
+        #     t.start()
+        #     running.append(t)
+        #     t.join(0)
+        #     time.sleep(sleep)
+        #
+        # while len(running)>0 :
+        #     for t in running:
+        #         if t.isAlive():
+        #             continue
+        #
+        #         running.remove(t)
+        #         if queue.qsize():
+        #             t=queue.get()
+        #             t.start()
+        #             running.append(t)
+        #             t.join(0)
+        #
+        #     if len(running)==Max:
+        #         time.sleep(sleep)
+        #
+        # del running
 
 class InstantManager(Manager):
 
@@ -264,12 +286,15 @@ class OandaManager(Manager):
     def update_manny(self,*collections,**kwargs):
         '''
 
-        :param collections:
+        :param collections: 要更新的collection名
         :param kwargs:
+            tail=xxx : 更新所有后缀为xxx的collection (default:M1)
+            finish=<datetime> : 表示更新到<datetime>的日期之后
         :return:
         '''
 
         tail=kwargs.pop('tail','M1')
+        finish=kwargs.pop('finish',datetime.now()-timedelta(hours=24))
 
         collections=list(collections)
         if len(collections)==0:
@@ -277,69 +302,47 @@ class OandaManager(Manager):
                 if col.endswith(tail):
                     collections.append(col)
 
-        uQueue=Queue.Queue(20)
+        # 线程锁
+        lock=threading.RLock()
+        # 运行中的线程池，临界资源
         running=[]
-        waiting=[]
 
-        run=True
-
-        # 向uQueue中添加请求
-        def putRequest():
-            while len(collections)>0:
+        # 发送数据请求，以多线程执行，线程池满时会被阻塞
+        def request(lock):
+            while len(collections):
                 for col in collections:
-                    if col in waiting:
-                        continue
-
-                    if not self.mDb[col].find_one({'datetime':{'$gte':datetime.now()-timedelta(hours=24)}}):
+                    if not self.mDb[col].find_one({'datetime':{'$gte':finish}}):
+                        lock.acquire()
                         t=threading.Thread(target=self.update,name=col,args=[col])
-
-                        try:
-                            uQueue.put(t,timeout=3)
-                            waiting.append(col)
-                        except Exception as e:
-                            print e
+                        t.start()
+                        running.append(t)
+                        t.join(0)
+                        lock.release()
                     else:
                         collections.remove(col)
-                        self.mDb[col].create_index('time',background=True)
                         print 'remove',col,'left',len(collections)
-                if len(waiting)==20:
-                    time.sleep(3)
-            global run
-            run=False
 
-        # 从uQueue中提取请求并行 最大并行10
-        def runRequest():
-            while len(running)<10:
-                try:
-                    t=uQueue.get(timeout=3)
-                    t.start()
-                    running.append(t)
-                    t.join(0)
-                except:
-                    if not run:
-                        return
+        # 将已收到数据的线程移出线程池，当线程池满时，线程池会被锁定
+        def release(lock):
+            while len(collections):
+                if len(running)<min(10,len(collections)):
+                    if lock._is_owned():
+                        lock.release()
+                else:
+                    if not lock._is_owned():
+                        lock.acquire()
+                    for t in running:
+                        if not t.isAlive():
+                            running.remove(t)
 
-            while run or len(running) or uQueue.qsize():
-                for t in running:
-                    if not t.isAlive():
-                        running.remove(t)
-                        waiting.remove(t.getName())
-                        try:
-                            t=uQueue.get(3)
-                            t.start()
-                            running.append(t)
-                            t.join(0)
-                        except Exception as e:
-                            print e
-
-        pr=threading.Thread(target=putRequest)
-        rr=threading.Thread(target=runRequest)
+        pr=threading.Thread(target=request,args=[lock])
+        rr=threading.Thread(target=release,args=[lock])
 
         pr.start()
         rr.start()
 
         pr.join(0)
-        rr.join()
+        rr.join(0)
 
 
     def get_request_parmams(self,**kw):
@@ -416,7 +419,7 @@ class OandaManager(Manager):
             kw['count']=None
 
         kw['daily_alignment']=kw.get('daily_alignment',0)
-        kw['alignment_timezone']=kw.get('alignment_timezone', 'GMT')
+        kw['alignment_timezone']=kw.get('alignment_timezone', 'UTC')
         kw['weekly_alignment']=kw.get('weekly_alignment',"Monday")
         kw['candle_format']='midpoint'
         try:
@@ -430,7 +433,6 @@ class OandaManager(Manager):
             return
 
         col=self.mClient.Oanda[col]
-        # print pandas.DataFrame(data['candles'])
         for candle in data['candles']:
             if not candle.get('complete',True):
                 data['candles'].remove(candle)
@@ -438,11 +440,13 @@ class OandaManager(Manager):
 
             candle['Date']=candle['time'][:-8]
             candle['datetime']=datetime.strptime(candle['Date'],'%Y-%m-%dT%H:%M:%S')
-            candle['time']=time.mktime(time.strptime(candle['Date'],'%Y-%m-%dT%H:%M:%S'))
+            candle['time']=time.mktime(candle['datetime'].timetuple())
 
             col.insert_one(candle)
 
-    def timeExpand(self,origin,destination,unit='',how='insert',Filter=None):
+        print kw['instrument'],kw['granularity']
+
+    def timeExpand(self,origin,destination,how='insert',Filter=None,**unit):
         '''
         扩展时间：由低位向高位扩展：
             1minute->1hour
@@ -450,7 +454,7 @@ class OandaManager(Manager):
             ...
         :param origin: 要扩展的collection
         :param destination: 扩展后的目标collection
-        :param unit: 单位: 'hour','day','month','year'
+        :param unit:
         :param how:
             'insert':导入全部origin
             'update':在destination原有基础上添加
@@ -459,51 +463,36 @@ class OandaManager(Manager):
         '''
         priority=['year','month','day','hour','minute']
 
-
         if how=='update':
             last=destination.find_one(sort=[('time',-1)])
             destination.delete_one(last)
             Filter={'time':{'$gte':last['time']}}
+        elif how=='insert':
+            print 'drop',destination
+            self.mDb.drop_collection(destination)
 
-
-        last=-1
-        now={}
+        joiner=TimeJoiner(collection=destination,**unit)
+        joiner.start()
         for d in origin.find(Filter):
-            dt=d['datetime']
-            attr=dt.__getattribute__(unit)
-            if 'closeMid' in now:
-                if now['highMid']<d['highMid']:
-                    now['highMid']=d['highMid']
-                if now['lowMid']>d['lowMid']:
-                    now['lowMid']=d['lowMid']
-                now['volume']+=d['volume']
+            d.pop('_id',None)
+            joiner.put(d)
+        joiner.stop()
+        destination.create_index('time',background=True)
 
-            if last!=attr:
-                if 'closeMid' in now:
-                    now['time']=time.mktime(now['datetime'].timetuple())
-                    now['closeMid']=d['closeMid']
-                    now.pop('_id',None)
-                    destination.insert_one(now)
-
-                last=attr
-                now=d
-                now['datetime']=dt
-
-        print origin,'to',destination,Filter
+        print origin.name,'to',destination.name,Filter
 
     def expand_symbol(self,symbol,how='update',Filter=None):
-        m1=self.mDb['%s.M1' % symbol]
-        h1=self.mDb['%s.H1' % symbol]
-        d=self.mDb['%s.D' % symbol]
-        m=self.mDb['%s.M' % symbol]
-        if how=='insert':
-            self.mDb.drop_collection(h1)
-            self.mDb.drop_collection(d)
-            self.mDb.drop_collection(m)
+        period=[
+            self.mDb['%s.M1' % symbol],
+            self.mDb['%s.H1' % symbol],
+            self.mDb['%s.D' % symbol],
+            self.mDb['%s.M' % symbol]
+        ]
+        units=[{'hour':1},{'day':1},{'month':1}]
 
-        self.timeExpand(m1,h1,'hour',how,Filter)
-        self.timeExpand(h1,d,'day',how,Filter)
-        self.timeExpand(d,m,'month',how,Filter)
+        for i in range(1,len(period)):
+            self.timeExpand(period[i-1],period[i],how,Filter,**units[i-1])
+
 
 
     def expand_manny(self,*params):
@@ -526,14 +515,13 @@ class OandaManager(Manager):
         kw['count']=5000
         kw['granularity']=kw.pop('type')
         kw['daily_alignment']=0
-        kw['alignment_timezone']='GMT'
+        kw['alignment_timezone']='UTC'
         kw['weekly_alignment']="Monday"
         kw['candle_format']='midpoint'
         try:
             data=self.poclient.get_instrument_history(**kw)
         except Exception as e:
             print e.message
-            time.sleep(2)
             return
 
         for candle in data['candles']:
@@ -557,29 +545,47 @@ class OandaManager(Manager):
     def drop_dupliacte(self,collection,on='datetime'):
         collection=self.mDb[collection] if isinstance(collection,str) else collection
         pre=collection.find_one()[on]
-        # print pre
         collection.create_index(on)
         for c in collection.find(projection=[on]).sort([(on,1)])[0:]:
 
             if pre==c[on]:
                 collection.delete_one({on:c[on]})
-                print 'drop',c
+                print 'drop',collection.name,c.get('datetime',None)
             pre=c[on]
 
 
-
 if __name__ == '__main__':
+    start=datetime(2006,1,1).isoformat()
+    delta=timedelta(hours=2)
     om=OandaManager()
 
-    om.update_manny()
-    # om.timeExpand(om.mDb['EUR_USD.M1'],om.mDb['MergeTest'],'hour','update')
-    # symbols=['EUR_USD','GBP_USD','AUD_USD','USD_JPY','USD_CAD']
+    params=[]
+    for col in om.mDb.collection_names(False):
+        if col.endswith('.D'):
+            om.mDb.drop_collection(col)
+            collection=om.mDb[col]
+            params.append(dict(instrument=col.split('.')[0],
+                               granularity=col.split('.')[1],
+                               start=start,count=5000))
 
-    # for name in om.mDb.collection_names():
-    #     try:
-    #         om.drop_dupliacte(om.mDb[name],on='time')
-    #     except Exception as e:
-    #         print e
+    om._multiThreadRun(params,om.saveHistory,Max=10)
+
+
+
+    # om.timeExpand(om.mDb['EUR_USD.H1'],om.mDb['EUR_USD.D'],day=1)
+
+
+
+    # for i in ['EUR_USD','GBP_USD','USD_JPY','AUD_USD','NZU_USD','USD_CAD']:
+    #     thread=threading.Thread(target=om.timeExpand,
+    #                             args=[om.mDb['%s.H1' % i],om.mDb['%s.D' % i]],
+    #                             kwargs={'day':1})
+    #     thread.start()
+    #     thread.join(0)
+    # om.timeExpand(om.mDb['EUR_USD.M1'],om.mDb['EUR_USD.H1'],how='insert',hour=1)
+
+
+
 
 
 

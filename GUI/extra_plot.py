@@ -48,3 +48,27 @@ def histogram(df,c_width,value='value',dt='datetime',color='#115599',**kwargs):
     plot.quad(left=down.left,right=down.right,top=0,bottom=down[value],color=color)
 
     return plot
+
+def direction_histogram(df,c_width,value='value',dt='datetime',upColor='#aa1122',downColor='#22aa11',**kwargs):
+    df['left']=df[dt]-c_width
+    df['right']=df[dt]+c_width
+
+    df['dir']=0
+    for i in df.index[1:]:
+        df.set_value(i,'dir',df.get_value(i,value)-df.get_value(i-1,value))
+
+
+    up=df[df[value]>=0]
+    up_u=up[up['dir']>=0]
+    up_d=up[up['dir']<0]
+    down=df[df[value]<0]
+    down_u=down[down['dir']>=0]
+    down_d=down[down['dir']<0]
+
+
+    plot=figure(**kwargs)
+    plot.quad(left=up_u.left,right=up_u.right,top=up_u[value],bottom=0,color=upColor)
+    plot.quad(left=up_d.left,right=up_d.right,top=up_d[value],bottom=0,color=downColor)
+    plot.quad(left=down_u.left,right=down_u.right,top=0,bottom=down_u[value],color=upColor)
+    plot.quad(left=down_d.left,right=down_d.right,top=0,bottom=down_d[value],color=downColor)
+    return plot
