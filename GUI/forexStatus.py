@@ -2,28 +2,33 @@
 from GUI.extra_plot import candle,histogram,direction_histogram
 from bokeh.plotting import figure,output_file,show
 from bokeh.layouts import gridplot
-from support.dataManager import OandaManager
 from datetime import datetime,timedelta
+from DataBase.Client import connectDB
 
-om=OandaManager()
+client=connectDB('FinanceData')
 symbols=['EUR_USD','AUD_USD','GBP_USD','NZD_USD','USD_JPY','USD_CAD']
-cot_column='l-s'
 
-def getData(symbol,manager=om,cot_column=cot_column):
+def cot_column(symbol):
+    if symbol.endswith('USD'):
+        return 'l-s'
+    else:
+        return  's-l'
+
+def getData(symbol,client=client):
     # 获取candle数据
-    candle_=manager.mDb['%s.D' % symbol].find(
+    candle_=client.Oanda['%s.D' % symbol].find(
         {'datetime':{'$gte':datetime(2016,1,1)}},
         projection=['datetime','highMid','openMid','closeMid','lowMid']
     ).toDataFrame()
     # 获取HPR数据
-    sentiment=manager.mDb['%s.HPR' % symbol].find(
+    sentiment=client.Oanda['%s.HPR' % symbol].find(
         {'datetime':{'$gte':datetime(2016,1,1)}},
         projection=['datetime','position']
     ).toDataFrame()
     # 获取COT数据
-    cot=manager.mDb['%s.COT' % symbol].find(
+    cot=client.Oanda['%s.COT' % symbol].find(
         {'datetime':{'$gte':datetime(2016,1,1)}},
-        projection=['datetime',cot_column]
+        projection=['datetime',cot_column(symbol)]
     ).toDataFrame()
     candle_.pop('_id')
     sentiment.pop('_id')
@@ -45,7 +50,7 @@ def symbol_chart(symbol,candle_,cot,sentiment):
     # 画蜡烛图
     candlePlot=candle(candle_,c_width=timedelta(hours=10),title=symbol,height=200,x_axis_type="datetime")
     # 画cot柱图
-    cotPlot=direction_histogram(cot,c_width=timedelta(days=3),value=cot_column,height=200,title='COT',
+    cotPlot=direction_histogram(cot,c_width=timedelta(days=3),value=cot_column(symbol),height=200,title='COT',
                       x_axis_type="datetime",x_range=candlePlot.x_range)
     # 画hpr柱图
     sentimentPlot=direction_histogram(sentiment,c_width=timedelta(hours=10),value='position',height=200,title='sentiment',
