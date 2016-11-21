@@ -74,9 +74,37 @@ def main_chart(symbols):
     # 返回图
     return grid
 
+def HKindexChart(client=client):
+    #
+    data=client.Oanda['HK33_HKD.D'].find(
+        {'datetime':{'$gte':datetime(2016,6,28)}},
+        projection=['datetime','highMid','lowMid','openMid','closeMid']
+    ).toDataFrame()
+
+    candle_chart=candle(data,timedelta(hours=10),x_axis_type="datetime",
+                        title='HK33_HKD.D',height=300,width=1000)
+
+    hlData=client.YahooData['HK'].find(
+        projection=['index','H_L','R_F']
+    ).toDataFrame()
+
+    hlHistogram=histogram(hlData[['index','H_L']],timedelta(hours=10),value='H_L',dt='index',
+                          x_range=candle_chart.x_range,title='High-Low',
+                          height=300,width=1000,x_axis_type="datetime")
+
+    rfHistogram=histogram(hlData[['index','R_F']],timedelta(hours=10),value='R_F',dt='index',
+                          x_range=candle_chart.x_range,title='Raise-Fall',
+                          height=300,width=1000,x_axis_type="datetime")
+
+    return gridplot([candle_chart,hlHistogram,rfHistogram],ncols=1)
+
+
 if __name__ == '__main__':
-    output_file('forex_status.html')
-    # 画图
-    show(
-        main_chart(symbols)
-    )
+    # output_file('forex_status.html')
+    # # 画图
+    # show(
+    #     main_chart(symbols)
+    # )
+    ouput_file='HK33.html'
+    show(HKindexChart())
+
