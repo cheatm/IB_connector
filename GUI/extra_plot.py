@@ -58,7 +58,7 @@ def direction_histogram(df,c_width,value='value',dt='datetime',upColor='#aa1122'
         df.set_value(i,'dir',df.get_value(i,value)-df.get_value(i-1,value))
 
 
-    up=df[df[value]>=0]
+    up=df[df[value]>=0.0]
     up_u=up[up['dir']>=0]
     up_d=up[up['dir']<0]
     down=df[df[value]<0]
