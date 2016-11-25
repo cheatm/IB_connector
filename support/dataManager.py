@@ -6,7 +6,6 @@ import DataBase.Client
 import threading
 import Queue,pandas
 from datetime import datetime,timedelta
-from timeMerge import TimeJoiner
 
 def getRootDir(path=os.getcwd()):
     if os.path.exists('%s/ROOT' % path):
@@ -15,6 +14,12 @@ def getRootDir(path=os.getcwd()):
         return getRootDir(os.path.dirname(path))
 
 class Manager():
+
+    run=False
+    requests=Queue.Queue()
+    running=[]
+    accomplish=[]
+    lock=threading.RLock()
 
     def initMongoClient(self,**kw):
         '''
@@ -40,7 +45,6 @@ class Manager():
             return
 
         self.setDefaultCollection(kw['db'],kw['col'])
-
 
     def setDefaultMdb(self,db):
         self.mDb=self.mClient[db]
@@ -146,30 +150,74 @@ class Manager():
             release(running)
             time.sleep(0.1)
 
+    def execute(self,Max):
+        while self.run or self.requests.qsize():
+            while len(self.running)<Max and self.requests.qsize():
+                self.lock.acquire()
+                try:
+                    thread=self.requests.get()
+                    thread.start()
+                    self.running.append(thread)
+                    thread.join(0)
+                except Exception as e:
+                    print e
+                self.lock.release()
+        print 'executing accomplish'
 
-        # for i in range(0,max(Max,queue.qsize())):
-        #     t=queue.get()
-        #     t.start()
-        #     running.append(t)
-        #     t.join(0)
-        #     time.sleep(sleep)
-        #
-        # while len(running)>0 :
-        #     for t in running:
-        #         if t.isAlive():
-        #             continue
-        #
-        #         running.remove(t)
-        #         if queue.qsize():
-        #             t=queue.get()
-        #             t.start()
-        #             running.append(t)
-        #             t.join(0)
-        #
-        #     if len(running)==Max:
-        #         time.sleep(sleep)
-        #
-        # del running
+    def clean(self):
+        while self.run or self.requests.qsize() or len(self.running):
+            for thread in self.running:
+                if not thread.isAlive():
+                    self.lock.acquire()
+                    self.running.remove(thread)
+                    self.lock.release()
+                    self.accomplish.append(thread.name)
+        print 'cleaning accomplish'
+
+
+    def putRequest(self,function,name=None,*args,**kw):
+        self.requests.put(
+            threading.Thread(target=function,name=name,args=args,kwargs=kw)
+        )
+
+
+    def start(self,Max=5):
+        self.run=True
+        self.executor=threading.Thread(target=self.execute,kwargs={'Max':Max})
+        self.cleaner=threading.Thread(target=self.clean)
+        self.executor.start()
+        self.cleaner.start()
+
+    def stop(self):
+        self.run=False
+        self.executor.join()
+        self.cleaner.join()
+
+    def changeData(self,collection,db=None,how=None,*args,**kwargs):
+        '''
+
+        :param collection:
+        :param db:
+        :param how:
+            projection=func
+        :return:
+        '''
+
+        print kwargs
+
+        if not db:
+            collection=self.mDb[collection] if isinstance(collection,str) else collection
+        else:
+            if isinstance(db,str):
+                collection=self.mClient[db][collection]
+            else:
+                collection=db[collection]
+
+        for doc in collection.find(*args,**kwargs):
+
+            collection.update_one({'_id':doc['_id']},how(doc))
+
+        print collection.name,'finish'
 
 class InstantManager(Manager):
 
@@ -267,15 +315,10 @@ class OandaManager(Manager):
         if 'db' not in kw:
             self.mDb=self.mClient['Oanda']
 
-    def __getattr__(self, item):
-        try:
-            return getattr(self.opclient,item)
-        except Exception as e:
-            raise AttributeError(e.message)
-            pass
+
 
     def save_mongo(self,data,collection,db=None):
-        collection=self.mDb[collection] if db is None else self[db][collection]
+        collection=self.mDb[collection] if db is None else self.mClient[db][collection]
         collection.insert(data)
 
     def update(self,collection):
@@ -302,47 +345,18 @@ class OandaManager(Manager):
                 if col.endswith(tail):
                     collections.append(col)
 
-        # 线程锁
-        lock=threading.RLock()
-        # 运行中的线程池，临界资源
-        running=[]
-
-        # 发送数据请求，以多线程执行，线程池满时会被阻塞
-        def request(lock):
-            while len(collections):
-                for col in collections:
-                    if not self.mDb[col].find_one({'datetime':{'$gte':finish}}):
-                        lock.acquire()
-                        t=threading.Thread(target=self.update,name=col,args=[col])
-                        t.start()
-                        running.append(t)
-                        t.join(0)
-                        lock.release()
-                    else:
-                        collections.remove(col)
-                        print 'remove',col,'left',len(collections)
-
-        # 将已收到数据的线程移出线程池，当线程池满时，线程池会被锁定
-        def release(lock):
-            while len(collections):
-                if len(running)<min(10,len(collections)):
-                    if lock._is_owned():
-                        lock.release()
+        self.accomplish=list(collections)
+        self.start(5)
+        while len(collections):
+            for col in collections:
+                if not self.mDb[col].find_one({'datetime':{'$gte':finish}}):
+                    if col in self.accomplish:
+                        self.putRequest(self.update(col))
+                        self.accomplish.remove(col)
                 else:
-                    if not lock._is_owned():
-                        lock.acquire()
-                    for t in running:
-                        if not t.isAlive():
-                            running.remove(t)
-
-        pr=threading.Thread(target=request,args=[lock])
-        rr=threading.Thread(target=release,args=[lock])
-
-        pr.start()
-        rr.start()
-
-        pr.join(0)
-        rr.join(0)
+                    collections.remove(col)
+                    print 'remove',col,'left',len(collections)
+        self.stop()
 
 
     def get_request_parmams(self,**kw):
@@ -446,60 +460,6 @@ class OandaManager(Manager):
 
         print kw['instrument'],kw['granularity']
 
-    def timeExpand(self,origin,destination,how='insert',Filter=None,**unit):
-        '''
-        扩展时间：由低位向高位扩展：
-            1minute->1hour
-            1hour->1day
-            ...
-        :param origin: 要扩展的collection
-        :param destination: 扩展后的目标collection
-        :param unit:
-        :param how:
-            'insert':导入全部origin
-            'update':在destination原有基础上添加
-
-        :return:
-        '''
-        priority=['year','month','day','hour','minute']
-
-        if how=='update':
-            last=destination.find_one(sort=[('time',-1)])
-            destination.delete_one(last)
-            Filter={'time':{'$gte':last['time']}}
-        elif how=='insert':
-            print 'drop',destination
-            self.mDb.drop_collection(destination)
-
-        joiner=TimeJoiner(collection=destination,**unit)
-        joiner.start()
-        for d in origin.find(Filter):
-            d.pop('_id',None)
-            joiner.put(d)
-        joiner.stop()
-        destination.create_index('time',background=True)
-
-        print origin.name,'to',destination.name,Filter
-
-    def expand_symbol(self,symbol,how='update',Filter=None):
-        period=[
-            self.mDb['%s.M1' % symbol],
-            self.mDb['%s.H1' % symbol],
-            self.mDb['%s.D' % symbol],
-            self.mDb['%s.M' % symbol]
-        ]
-        units=[{'hour':1},{'day':1},{'month':1}]
-
-        for i in range(1,len(period)):
-            self.timeExpand(period[i-1],period[i],how,Filter,**units[i-1])
-
-
-
-    def expand_manny(self,*params):
-
-        pass
-
-
     def _save_history(self,**kw):
         '''
         用于更新历史数据，一次最多5000bar
@@ -537,16 +497,19 @@ class OandaManager(Manager):
     def _get_col_info(self,collection):
         slist= collection.name.split('.')
 
-        Type=self.typeDict[slist[1]]
-        out=self.get_request_parmams(col=collection,instrument=slist[0],type=slist[1],func=Type)
+        if slist[1] in self.typeDict:
+            Type=self.typeDict[slist[1]]
+            out=self.get_request_parmams(col=collection,instrument=slist[0],type=slist[1],func=Type)
 
-        return out
+            return out
+        else:
+            return slist[1],'is not able to update'
 
-    def drop_dupliacte(self,collection,on='datetime'):
+    def drop_duplicate(self,collection,on='datetime'):
         collection=self.mDb[collection] if isinstance(collection,str) else collection
         pre=collection.find_one()[on]
         collection.create_index(on)
-        for c in collection.find(projection=[on]).sort([(on,1)])[0:]:
+        for c in collection.find(projection=[on]).sort([(on,1)])[1:]:
 
             if pre==c[on]:
                 collection.delete_one({on:c[on]})
@@ -554,35 +517,25 @@ class OandaManager(Manager):
             pre=c[on]
 
 
+
 if __name__ == '__main__':
-    start=datetime(2006,1,1).isoformat()
-    delta=timedelta(hours=2)
+
     om=OandaManager()
+    om.update_manny(tail='.H1',finish=timedelta(days=2))
+    om.update_manny(tail='.H4',finish=timedelta(days=2))
+    om.update_manny(tail='.D',finish=datetime.today()-timedelta(days=2))
 
-    params=[]
-    for col in om.mDb.collection_names(False):
-        if col.endswith('.D'):
-            om.mDb.drop_collection(col)
-            collection=om.mDb[col]
-            params.append(dict(instrument=col.split('.')[0],
-                               granularity=col.split('.')[1],
-                               start=start,count=5000))
-
-    om._multiThreadRun(params,om.saveHistory,Max=10)
+    # om.start(5)
+    # for col in om.mDb.collection_names(False):
+    #     if col.endswith('.D'):
+    #         om.putRequest(om.drop_duplicate,col,str(col))
+    # om.stop()
 
 
 
-    # om.timeExpand(om.mDb['EUR_USD.H1'],om.mDb['EUR_USD.D'],day=1)
 
 
 
-    # for i in ['EUR_USD','GBP_USD','USD_JPY','AUD_USD','NZU_USD','USD_CAD']:
-    #     thread=threading.Thread(target=om.timeExpand,
-    #                             args=[om.mDb['%s.H1' % i],om.mDb['%s.D' % i]],
-    #                             kwargs={'day':1})
-    #     thread.start()
-    #     thread.join(0)
-    # om.timeExpand(om.mDb['EUR_USD.M1'],om.mDb['EUR_USD.H1'],how='insert',hour=1)
 
 
 

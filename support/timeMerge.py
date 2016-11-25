@@ -26,6 +26,7 @@ class TimeJoiner(object):
         index=0
         Times=['month','week','day','hour','minute','second']
 
+        self.slip=how
         for t in how:
             newi=Times.index(t)
             if index<newi:
@@ -38,6 +39,7 @@ class TimeJoiner(object):
             self.ignore[t]=0
 
         self.delta=timedelta(**how)
+        print self.delta
 
     def start(self):
         self.__run=True
@@ -90,15 +92,17 @@ class TimeJoiner(object):
         self.__waiting.put(doc)
 
 if __name__ == '__main__':
-    client=pymongo.MongoClient(port=10001)
-    joiner=TimeJoiner(hour=1,collection=client.test['EUR_USD.H1'])
-    collection=client.Oanda['EUR_USD.M1']
+    # client=pymongo.MongoClient(port=10001)
+    # joiner=TimeJoiner(hour=1,collection=client.test['EUR_USD.H1'])
+    # collection=client.Oanda['EUR_USD.M1']
+    #
+    # joiner.start()
+    # for doc in collection.find({'datetime':{'$gte':datetime(2016,11,12)}}):
+    #     doc.pop('_id')
+    #     joiner.put(doc)
+    #
+    # joiner.stop()
 
-    joiner.start()
-    for doc in collection.find({'datetime':{'$gte':datetime(2016,11,12)}}):
-        doc.pop('_id')
-        joiner.put(doc)
-
-    joiner.stop()
-    # print joiner.getFinished()[['datetime','time','openMid','highMid','lowMid','closeMid']]
+    dt=datetime.now()
+    dt.replace()
 

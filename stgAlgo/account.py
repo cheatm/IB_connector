@@ -49,6 +49,11 @@ class Account():
 
 
         '''
+        self.orders=[]
+        self.ordersHistory=[]
+        self.Time=0
+        self.capital=[]
+        self.log=[]
 
 
         self.lever=lever
@@ -56,11 +61,16 @@ class Account():
         self.initCash=initCash
         self.nextTicket=0
 
-        self.CLOSE=kwargs.pop('close','close')
-        self.HIGH=kwargs.pop('high','high')
-        self.LOW=kwargs.pop('low','low')
+        self.initKwargs=kwargs.copy()
+
+        self.CLOSE=kwargs.pop('close','closeMid')
+        self.HIGH=kwargs.pop('high','highMid')
+        self.LOW=kwargs.pop('low','lowMid')
         if 'data' in kwargs:
             self.data=kwargs['data']
+
+    def copy(self):
+        return Account(self.initCash,self.lever,**self.initKwargs)
 
     def setDataInterface(self,data):
         self.data=data
@@ -118,7 +128,9 @@ class Account():
         return pandas.DataFrame(orders,columns=attrs)
 
     def getHistoryOrders(self):
-        attrs=['ticket','code','openTime','closeTime','openPrice','closePrice','lots','stoplost','takeprofit','deposit','profit']
+        attrs=['ticket','code','openTime','closeTime','openPrice',
+               'closePrice','lots','stoplost','takeprofit',
+               'deposit','profit','closeType']
         orders=[]
         for o in self.ordersHistory:
             order=[]
@@ -138,33 +150,29 @@ class Account():
     def refreshOrder(self,order):
 
         if order.lots>0:
-            if order.stoplost and order.stoplost>self.data[order.code][self.LOW]:
+            if order.stoplost and order.stoplost>self.data[order.code][self.LOW][-1]:
                 self.closeOrder(order.stoplost,order,'SL')
                 return
-            if order.takeprofit and order.takeprofit<self.data[order.code][self.HIGH]:
+            if order.takeprofit and order.takeprofit<self.data[order.code][self.HIGH][-1]:
                 self.closeOrder(order.takeprofit,order,'TP')
                 return
         else:
-            if order.stoplost and order.stoplost<self.data[order.code][self.HIGH]:
+            if order.stoplost and order.stoplost<self.data[order.code][self.HIGH][-1]:
                 self.closeOrder(order.stoplost,order,'SL')
                 return
-            if order.takeprofit and order.takeprofit>self.data[order.code][self.LOW]:
+            if order.takeprofit and order.takeprofit>self.data[order.code][self.LOW][-1]:
                 self.closeOrder(order.takeprofit,order,'TP')
                 return
 
-        order.profit=(self.data[order.code]['closeMid'][-1]-order.openPrice)*order.lots/\
+        order.profit=(self.data[order.code][self.CLOSE][-1]-order.openPrice)*order.lots/\
             self.data[order.code].point
-
-        pass
 
     def refresh(self):
         self.Time=self.data.time[-1]
 
-        for o in self.orders:
-            self.refreshOrder(o)
-
         capital=self.cash
         for o in self.orders:
+            self.refreshOrder(o)
             capital=capital+o.profit+o.deposit
 
         self.log.append(
@@ -190,6 +198,9 @@ class Account():
                 'datetime':datetime.fromtimestamp(self.Time)
             }
         )
+
+    def getLog(self):
+        return pandas.DataFrame(self.log)
 
 
     def findOrder(self,value,searchBy='ticket',mode='orders'):

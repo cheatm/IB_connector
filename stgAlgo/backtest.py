@@ -1,17 +1,55 @@
 # coding:utf-8
 import time
 import datetime
+from sTree import Params
+import pandas
 
 class BackTestSystem():
 
-    def __init__(self,strategy):
-        self.strategy=strategy
-        self.engine=strategy.engine
+    def __init__(self):
+        pass
 
-    def set_collection(self,collection):
-        self.engine.set_collection(collection)
+    @staticmethod
+    def analysis(acc,**kwargs):
+        log=acc.getLog()
+        history=acc.getHistoryOrders()
 
-    def run(self,collection,start=0,end=time.time(),begin=0,**params):
+        log.insert(2,'MAX',[log['capital'].loc[0:i].max() for i in log.index])
+        log['return']=log['MAX']-log['capital']
+        log['return_per']=log['return']/log['MAX']
+        MAX_return=log['return'].max()
+        kwargs['Calmar_Ratio']=(log.get_value(log.index[-1],'capital')-log.get_value(log.index[0],'capital'))/MAX_return
+        profit=history['profit']
+        kwargs['Profit_Factor']=profit[history['profit']>0].sum()/abs(profit[history['profit']<0].sum())
+        kwargs['Lots_Total']=int(history['lots'].abs().sum())
+        kwargs['Trade_Times']=len(history.index)
+
+        return kwargs
+
+    def optimize(self,strategy,engine,colletion,start=0,end=datetime.datetime.now(),begin=0,point=1,
+                 analysis=None,**params):
+        if analysis is None:
+            analysis=BackTestSystem.analysis
+        eParame=params.pop('engine_param',{})
+        print params
+        opParams=Params(**params)
+
+        output=pandas.DataFrame(columns=list(params.keys()))
+
+        n=1.0
+        l=len(opParams)
+        for p in opParams:
+            Engine=engine(**eParame)
+            Engine.acc=Engine.acc.copy()
+            acc=self.run(strategy,Engine,colletion,start,end,begin,**p)
+            output=output.append(analysis(acc,**p),True)
+            print '%.2f%%' % (n/l*100)
+            n+=1
+        return output
+
+
+
+    def run(self,strategy,engine,collection,start=0,end=datetime.datetime.now(),begin=0,point=1,**params):
         '''
 
         :param collection: 基础数据
@@ -20,42 +58,37 @@ class BackTestSystem():
         :param params: 策略参数 (包括点数point，point默认为1)
         :return:
         '''
-
-        start=time.mktime(start.timetuple()) if isinstance(start,datetime.datetime) else start
-        end=time.mktime(end.timetuple()) if isinstance(end,datetime.datetime) else end
+        strategy=strategy(engine)
 
         # 初始化engine
-        self.engine.OnInit(collection=collection,point=params.pop('point',1))
+        engine.OnInit(collection=collection,point=point)
 
         # 初始化策略，包括将设置好的默认数据和指标信息传入engine
-        self.strategy.set_params(**params)
-        self.strategy.OnInit(collection=collection,data=self.engine.data)
+        strategy.set_params(**params)
+        strategy.OnInit(collection=collection,data=engine.data)
 
-        if self.engine.collection is None:
+        if engine.collection is None:
             raise AttributeError('No specific collection, try set_collection()')
 
-        cursor=self.engine.collection.find(
-            {'time':{'$gte':start,'$lte':end}},
-            self.engine.projection
+        start=engine.collection.find({'datetime':{'$lte':start}},sort=[('datetime',-1)]).skip(begin)[0]['datetime']
+
+        cursor=engine.collection.find(
+            {'datetime':{'$gte':start,'$lte':end}},
+            engine.projection
         )
 
-        print self.engine.data.point
-
-
-        times=0
         for c in cursor.clone()[:begin]:
-            self.engine.refresh(c)
+            engine.refresh(c)
 
         for c in cursor[begin:]:
-            self.engine.refresh(c)
-            self.strategy.onBar(self.engine.data)
-            times+=1
-            # if not times%50:
-            #     self.engine.data.clearAll()
+            engine.refresh(c)
+            strategy.onBar(engine.data)
 
-        self.engine.finish()
 
-        return self.engine.acc
+        engine.finish()
+
+        return engine.acc
+
 
 
 if __name__ == '__main__':
@@ -63,12 +96,9 @@ if __name__ == '__main__':
     from stgAlgo.backtestengine import OandaEngine
     import oanda_point as op
 
-    # 导入策略，引擎指针给策略
-    demo=StrategyDemo(OandaEngine())
-    # 策略导入回测系统
-    backtest=BackTestSystem(demo)
+    backtest=BackTestSystem()
     # 回测 输出账户返回回测完后的账户（包含交易信息）
-    acc=backtest.run(collection='GBP_USD.D',start=datetime.datetime(2016,9,1),point=op.GBP_USD)
+    acc=backtest.run(StrategyDemo,OandaEngine(),collection='GBP_USD.D',start=datetime.datetime(2016,9,1),point=op.GBP_USD)
 
     # 输出账户中的交易信息
     print acc.getHistoryOrders()

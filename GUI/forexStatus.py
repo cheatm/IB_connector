@@ -88,7 +88,7 @@ def HKindexChart(client=client):
         projection=['index','H_L','R_F']
     ).toDataFrame()
 
-    hlHistogram=histogram(hlData[['index','H_L']],timedelta(hours=10),value='H_L',dt='index',
+    hlHistogram=direction_histogram(hlData[['index','H_L']],timedelta(hours=10),value='H_L',dt='index',
                           x_range=candle_chart.x_range,title='High-Low',
                           height=300,width=1000,x_axis_type="datetime")
 

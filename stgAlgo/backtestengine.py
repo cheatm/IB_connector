@@ -17,6 +17,7 @@ class ActiveData(object):
         '''
 
         self.name=name
+        self.__setattr__(name,self)
         self.point=point
 
         # 表示存储的数据
@@ -45,7 +46,7 @@ class ActiveData(object):
         '''
         self[other].importData(**kwargs)
 
-    def create(self,attr,*attrs):
+    def create(self,attr,*attrs,**kw):
         '''
         创建空数据列
         :param attr: 列名
@@ -59,14 +60,14 @@ class ActiveData(object):
         if len(attrs):
             if hasattr(self,attrs[0]):
                 if isinstance(self[attrs[0]],ActiveData):
-                    self[attrs[0]].create(attr,*attrs[1:])
+                    self[attrs[0]].create(attr,*attrs[1:],**kw)
                 else:
                     raise TypeError("self.%s is not class<ActiveData>" % attrs[0])
             else:
                 raise AttributeError("ActiveData<%s> does not have attribute: %s" % (self.name,attrs[0]) )
 
         else:
-            self[attr]=[]
+            self[attr]=kw.pop('value',[])
             self.columns.append(attr)
 
     def createChild(self,name,point=1):
@@ -135,7 +136,7 @@ class OandaEngine(Manager):
     def initDataSerivce(self,symbol,data=None,**kw):
         self.data=ActiveData(symbol,kw.pop('point',1)) if data==None else data
         for prj in kw.pop('projection',self.projection):
-            self.data[prj]=[]
+            self.data.create(prj)
 
         self.acc.setDataInterface(self.data)
 
@@ -175,7 +176,7 @@ class OandaEngine(Manager):
 
     def open(self,**kw):
 
-        symbol=kw.get('symbol',None)
+        symbol=kw.get('symbol',self.symbol)
         self.acc.openOrder(code=symbol,
                            price=kw.pop('price',self.data[symbol]['closeMid'][-1]),
                            lots=kw.pop('lots',1),
@@ -198,11 +199,11 @@ class OandaEngine(Manager):
         '''
 
         order=kw.pop('order') if 'order' in kw else self.acc.findOrder(kw['value'],kw.pop('searchBy','ticket'))
-        self.acc.closeOrder(self.data[order.code]['closeBid'][-1],order)
+        self.acc.closeOrder(self.data[order.code]['closeMid'][-1],order)
 
     def addIndicator(self,name,*args,**kw):
         # 添加常驻指标信息
-        kw.pop('data',self.data).create(name,*args)
+        kw.pop('data',self.data).create(name,*args,**kw)
 
 
     def addSymbol(self,symbol,projection,**kw):
@@ -245,11 +246,8 @@ class OandaEngine(Manager):
 
 if __name__ == '__main__':
 
-    engine=OandaEngine()
-
-    engine.addSymbol('EUR_USD.D',['closeBid'])
-    for i in engine.mDb['GBP_USD.D'].find(projection=['time','closeBid','openBid']).limit(30):
-        engine.refresh(i)
+    data=ActiveData('test')
+    print data['test']
 
 
 
