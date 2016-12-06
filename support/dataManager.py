@@ -521,9 +521,10 @@ class OandaManager(Manager):
 if __name__ == '__main__':
 
     om=OandaManager()
-    om.update_manny(tail='.H1',finish=datetime.today()-timedelta(days=2))
-    om.update_manny(tail='.H4',finish=datetime.today()-timedelta(days=2))
-    om.update_manny(tail='.D',finish=datetime.today()-timedelta(days=2))
+    # om.update_manny(tail='.COT',finish=datetime.today()-timedelta(days=1))
+    om.update_manny(tail='.HPR',finish=datetime.today()-timedelta(days=1))
+    om.update_manny(tail='.D',finish=datetime.today()-timedelta(days=1))
+    om.update_manny(tail='.H1',finish=datetime.today()-timedelta(days=1))
 
     # om.start(5)
     # for col in om.mDb.collection_names(False):

@@ -94,8 +94,11 @@ def getIndicator(indicator,time,*inputs,**params):
 
     ind = getInd(indicator,*inputs,**params)
 
+    try:
+        data={time.name:time}
+    except:
+        data={'time':time}
 
-    data={'time':time}
     if not isinstance(ind,tuple):
         data[0]=ind
     else:

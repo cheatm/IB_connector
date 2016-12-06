@@ -11,7 +11,7 @@ def getRootDir(path=os.getcwd()):
 
 db_info_dir='%s/DataBase' % getRootDir()
 
-def connectDB(dbname):
+def connectDB(dbname='FinanceData'):
     info= getDBinfo(dbname)
     return connect(**info)
 
